@@ -90,3 +90,78 @@ impl ShardedQueue {
         self.pick_shard(key).pop_batch(max)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Header, Message, MessageType, Tlv, MAGIC, VERSION};
+    use std::sync::Arc;
+    use std::thread;
+
+    fn make_mesages(id: usize) -> Message {
+        Message {
+            header: Header {
+                magic: *MAGIC,
+                version: VERSION,
+                msg_type: MessageType::JobPush,
+                flags: 0,
+                payload_len: 0,
+            },
+            tlvs: vec![
+                Tlv {
+                    tag: 0x01,
+                    value: format!("job{}", id).into_bytes(),
+                },
+                Tlv {
+                    tag: 0x03,
+                    value: (id as i32).to_be_bytes().to_vec(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_shard_push_pop() {
+        let queue = ShardedQueue::new(2);
+        let message = make_mesages(42);
+        queue.push(0, message.clone());
+        let pop = queue.pop(0);
+        assert_eq!(pop.tlvs[0].value, message.tlvs[0].value);
+    }
+
+    #[test]
+    fn test_shard_push_pop_batch() {
+        let queue = ShardedQueue::new(2);
+        let batch: Vec<Message> = (0..5).map(make_mesages).collect();
+        queue.push_batch(1, batch.clone());
+        let popped = queue.pop_batch(1, 5);
+        assert_eq!(popped.len(), 5);
+        for (b, p) in batch.iter().zip(popped.iter()) {
+            assert_eq!(b.tlvs[0].value, p.tlvs[0].value);
+        }
+    }
+
+    #[test]
+    fn test_multi_threaded_producers_consumers() {
+        let queue = Arc::new(ShardedQueue::new(4));
+        let mut handles: Vec<_> = vec![];
+
+        for i in 0..4 {
+            let q = Arc::clone(&queue);
+            handles.push(thread::spawn(move || {
+                let batch: Vec<Message> = (0..10).map(|j| make_mesages(i*10 + j)).collect();
+                q.push_batch(i, batch)
+            }))
+        }
+        for i in 0..4 {
+            let q = Arc::clone(&queue);
+            handles.push(thread::spawn(move || {
+                let batch = q.pop_batch(i, 10);
+                assert_eq!(batch.len(), 10);
+            }))
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+}

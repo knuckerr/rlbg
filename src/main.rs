@@ -37,10 +37,10 @@ fn main() {
     }
 
     // Consumer: batch pop
-    for i in 0..4 {
+    for i in 0..2 {
         let q = Arc::clone(&queue);
         thread::spawn(move || {
-            let batch = q.pop_batch(i, 5); // pop up to 5 messages
+            let batch = q.pop_batch(i, 10); // pop up to 5 messages
             for msg in batch {
                 let value = str::from_utf8(&msg.tlvs[0].value).unwrap();
                 println!("Consumer {} got: {:?}", i, value);
