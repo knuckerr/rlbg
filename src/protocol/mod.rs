@@ -137,8 +137,8 @@ impl Tlv {
 
 #[derive(Debug, Clone)]
 pub struct Message {
-    header: Header,
-    tlvs: Vec<Tlv>,
+    pub header: Header,
+    pub tlvs: Vec<Tlv>,
 }
 
 impl Message {
