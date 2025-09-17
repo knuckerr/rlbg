@@ -1,9 +1,10 @@
-use crate::protocol;
+use crate::protocol::Message;
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
+#[derive(Debug)]
 pub struct Shard {
-    queue: Mutex<VecDeque<protocol::Message>>,
+    queue: Mutex<VecDeque<Message>>,
     codvar: Condvar,
 }
 
@@ -14,14 +15,14 @@ impl Shard {
             codvar: Condvar::new(),
         }
     }
-    // push a message
-    pub fn push(&self, msg: protocol::Message) {
+
+    pub fn push(&self, msg: Message) {
         let mut q = self.queue.lock().unwrap();
         q.push_back(msg);
         self.codvar.notify_one();
     }
 
-    pub fn push_batch(&self, msgs: Vec<protocol::Message>) {
+    pub fn push_batch(&self, msgs: Vec<Message>) {
         if msgs.is_empty() {
             return;
         }
@@ -30,32 +31,29 @@ impl Shard {
         self.codvar.notify_all();
     }
 
-    pub fn pop(&self) -> protocol::Message {
+    pub fn pop(&self) -> Option<Message> {
         let mut q = self.queue.lock().unwrap();
-        loop {
-            if let Some(msg) = q.pop_front() {
-                return msg;
-            }
-            q = self.codvar.wait(q).unwrap();
-        }
+        q.pop_front()
     }
-    pub fn pop_batch(&self, max: usize) -> Vec<protocol::Message> {
+    pub fn pop_batch(&self, max: usize) -> Vec<Message> {
         let mut q = self.queue.lock().unwrap();
-        loop {
-            if !q.is_empty() {
-                let mut batch: Vec<protocol::Message> = Vec::with_capacity(max.min(q.len()));
-                for _ in 0..max.min(q.len()) {
-                    if let Some(msg) = q.pop_front() {
-                        batch.push(msg);
-                    }
-                }
-                return batch;
+        let mut batch = Vec::new();
+        for _ in 0..max {
+            if let Some(msg) = q.pop_front() {
+                batch.push(msg);
+            } else {
+                break;
             }
-            q = self.codvar.wait(q).unwrap();
         }
+        batch
+    }
+
+    pub fn try_pop(&self) -> Option<Message> {
+        self.queue.lock().unwrap().pop_front()
     }
 }
 
+#[derive(Debug)]
 pub struct ShardedQueue {
     shards: Vec<Arc<Shard>>,
     shard_count: usize,
@@ -70,31 +68,51 @@ impl ShardedQueue {
         }
     }
 
-    pub fn pick_shard(&self, key: usize) -> &Arc<Shard> {
+    fn pick_shard(&self, key: usize) -> &Arc<Shard> {
         &self.shards[key % self.shard_count]
     }
 
-    pub fn push(&self, key: usize, msg: protocol::Message) {
+    pub fn push(&self, key: usize, msg: Message) {
         self.pick_shard(key).push(msg);
     }
 
-    pub fn push_batch(&self, key: usize, msgs: Vec<protocol::Message>) {
+    pub fn push_batch(&self, key: usize, msgs: Vec<Message>) {
         self.pick_shard(key).push_batch(msgs);
     }
 
-    pub fn pop(&self, key: usize) -> protocol::Message {
+    pub fn pop(&self, key: usize) -> Option<Message> {
         self.pick_shard(key).pop()
     }
 
-    pub fn pop_batch(&self, key: usize, max: usize) -> Vec<protocol::Message> {
+    pub fn pop_batch(&self, key: usize, max: usize) -> Vec<Message> {
         self.pick_shard(key).pop_batch(max)
     }
+
+    pub fn try_pop(&self, key: usize) -> Option<Message> {
+        self.pick_shard(key).try_pop()
+    }
+}
+
+// Global queues
+static GLOBAL_QUEUE: OnceLock<Arc<ShardedQueue>> = OnceLock::new();
+
+pub fn init_global_queue(shard_count: usize) {
+    GLOBAL_QUEUE
+        .set(Arc::new(ShardedQueue::new(shard_count)))
+        .expect("Global queue already initialized");
+}
+
+pub fn get_global_queue() -> Arc<ShardedQueue> {
+    GLOBAL_QUEUE
+        .get()
+        .expect("Failed to get Global queue")
+        .clone()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Header, Message, MessageType, Tlv, MAGIC, VERSION};
+    use crate::protocol::{Header, Message, MessageType, Tlv, MAGIC, VERSION};
     use std::sync::Arc;
     use std::thread;
 
@@ -125,7 +143,7 @@ mod tests {
         let queue = ShardedQueue::new(2);
         let message = make_mesages(42);
         queue.push(0, message.clone());
-        let pop = queue.pop(0);
+        let pop = queue.pop(0).unwrap();
         assert_eq!(pop.tlvs[0].value, message.tlvs[0].value);
     }
 
@@ -149,7 +167,7 @@ mod tests {
         for i in 0..4 {
             let q = Arc::clone(&queue);
             handles.push(thread::spawn(move || {
-                let batch: Vec<Message> = (0..10).map(|j| make_mesages(i*10 + j)).collect();
+                let batch: Vec<Message> = (0..10).map(|j| make_mesages(i * 10 + j)).collect();
                 q.push_batch(i, batch)
             }))
         }

@@ -4,14 +4,14 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 
-pub fn handle_client(mut stream: TcpStream, queue: Arc<ShardedQueue>) {
+pub fn handle_client(mut stream: TcpStream, shard_count: usize, queue: Arc<ShardedQueue>) {
     let mut buf = [0u8; 4092];
 
     loop {
         match stream.read(&mut buf) {
             Ok(0) => break, // connection close
             Ok(n) => match Message::decode(&buf[..n]) {
-                Ok(msg) => dispatch_message(msg, &queue, &mut stream),
+                Ok(msg) => dispatch_message(msg, shard_count, &queue, &mut stream),
                 Err(e) => {
                     send_success_or_error_message(
                         &mut stream,
@@ -29,32 +29,48 @@ pub fn handle_client(mut stream: TcpStream, queue: Arc<ShardedQueue>) {
     }
 }
 
-fn dispatch_message(msg: Message, queue: &Arc<ShardedQueue>, stream: &mut TcpStream) {
+fn dispatch_message(msg: Message, shard_count: usize, queue: &Arc<ShardedQueue>, stream: &mut TcpStream) {
     match msg.header.msg_type {
-        MessageType::JobPush => handle_job_push(stream, msg, queue),
-        MessageType::JobAck => handle_job_ack(stream, msg, queue),
+        MessageType::JobPush => handle_job_push(stream, shard_count, msg, queue),
+        MessageType::JobAck => handle_job_ack(stream, shard_count, msg, queue),
         _ => eprintln!("Unknown message type: {:?}", msg.header.msg_type),
     }
 }
 
-fn handle_job_push(stream: &mut TcpStream, msg: Message, queue: &Arc<ShardedQueue>) {
-    let key = compute_shard_key(&msg);
+fn handle_job_push(stream: &mut TcpStream, shard_count: usize, msg: Message, queue: &Arc<ShardedQueue>) {
+    let key = compute_shard_key(&msg, shard_count);
     queue.push(key, msg);
     send_success_or_error_message(stream, MessageType::JobAck, "success", 1);
 }
 
-fn handle_job_ack(stream: &mut TcpStream, msg: Message, queue: &Arc<ShardedQueue>) {
-    let key = compute_shard_key(&msg);
+fn handle_job_ack(stream: &mut TcpStream, shard_count: usize, msg: Message, queue: &Arc<ShardedQueue>) {
+    let key = compute_shard_key(&msg, shard_count);
     let response = queue.pop(key);
-    let encoded = response.encode();
-    if let Err(e) = stream.write_all(&encoded) {
-        eprintln!("Failed to send ack: {}", e);
+    match response {
+        Some(msg) => {
+            let encoded = msg.encode();
+
+            if let Err(e) = stream.write_all(&encoded) {
+                eprintln!("Failed to send ack: {}", e);
+            };
+        }
+        None => {
+            send_success_or_error_message(stream, MessageType::Control, "No message to pop", 0);
+        }
     }
 }
 
-fn compute_shard_key(msg: &Message) -> usize {
-    msg.tlvs.get(0).map(|t| t.value[0] as usize).unwrap_or(0)
+fn compute_shard_key(msg: &Message, shard_count: usize) -> usize {
+    if let Some(tlv) = msg.tlvs.get(0) {
+        let mut hash = 0usize;
+        for b in &tlv.value {
+            hash = hash.wrapping_mul(31).wrapping_add(*b as usize);
+        }
+        return hash % shard_count;
+    }
+    0
 }
+
 
 fn send_success_or_error_message(
     stream: &mut TcpStream,
