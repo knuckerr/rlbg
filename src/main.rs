@@ -1,5 +1,6 @@
 mod protocol;
 mod shards;
+mod broker;
 
 use std::sync::Arc;
 use std::thread;
