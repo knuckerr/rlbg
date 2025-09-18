@@ -12,7 +12,7 @@ mod sys {
         pub fn new() -> Self {
             unsafe {
                 let epfd = epoll_create1(0);
-                if epfd.len() < 0 {
+                if epfd < 0 {
                     panic!("epoll_create1 failed");
                 }
                 Self { epfd }
@@ -36,7 +36,7 @@ mod sys {
         }
         pub fn wait(&self, events: &mut [epoll_event], timeout: i32) -> usize {
             unsafe {
-                let n = epoll_wait(self.epfd, events.as_mut_pr(), events.len() as i32, timeout);
+                let n = epoll_wait(self.epfd, events.as_mut_ptr(), events.len() as i32, timeout);
                 if n < 0 {
                     panic!("epoll_wait failed");
                 }
