@@ -1,4 +1,3 @@
 pub mod server;
 pub mod handlers;
-pub mod eventloop;
 pub mod threadpool;
