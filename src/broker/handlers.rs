@@ -1,3 +1,6 @@
+use crate::log_error;
+use crate::log_info;
+use crate::logger::global_loger;
 use crate::protocol::{Header, Message, MessageType, Tlv, MAGIC, VERSION};
 use crate::shards::ShardedQueue;
 use std::io::{Read, Write};
@@ -19,31 +22,53 @@ pub fn handle_client(mut stream: TcpStream, shard_count: usize, queue: Arc<Shard
                         "failed to decode",
                         0,
                     );
-                    eprintln!("Failed to decode the message {}", e)
+                    log_error!(global_loger(), "Failed to decode the message {}", e);
                 }
             },
             Err(e) => {
-                eprintln!("Failed to read from the client {}", e);
+                log_error!(global_loger(), "Failed to reead from the client {}", e);
             }
         }
     }
 }
 
-fn dispatch_message(msg: Message, shard_count: usize, queue: &Arc<ShardedQueue>, stream: &mut TcpStream) {
+fn dispatch_message(
+    msg: Message,
+    shard_count: usize,
+    queue: &Arc<ShardedQueue>,
+    stream: &mut TcpStream,
+) {
     match msg.header.msg_type {
         MessageType::JobPush => handle_job_push(stream, shard_count, msg, queue),
         MessageType::JobAck => handle_job_ack(stream, shard_count, msg, queue),
-        _ => eprintln!("Unknown message type: {:?}", msg.header.msg_type),
+        _ => {
+            log_error!(
+                global_loger(),
+                "Unknown message type: {:?}",
+                msg.header.msg_type
+            );
+        }
     }
 }
 
-fn handle_job_push(stream: &mut TcpStream, shard_count: usize, msg: Message, queue: &Arc<ShardedQueue>) {
+fn handle_job_push(
+    stream: &mut TcpStream,
+    shard_count: usize,
+    msg: Message,
+    queue: &Arc<ShardedQueue>,
+) {
     let key = compute_shard_key(&msg, shard_count);
-    queue.push(key, msg);
+    queue.push(key, msg.clone());
+    log_info!(global_loger(), "Recieved {:?} ", msg);
     send_success_or_error_message(stream, MessageType::JobAck, "success", 1);
 }
 
-fn handle_job_ack(stream: &mut TcpStream, shard_count: usize, msg: Message, queue: &Arc<ShardedQueue>) {
+fn handle_job_ack(
+    stream: &mut TcpStream,
+    shard_count: usize,
+    msg: Message,
+    queue: &Arc<ShardedQueue>,
+) {
     let key = compute_shard_key(&msg, shard_count);
     let response = queue.pop(key);
     match response {
@@ -51,7 +76,7 @@ fn handle_job_ack(stream: &mut TcpStream, shard_count: usize, msg: Message, queu
             let encoded = msg.encode();
 
             if let Err(e) = stream.write_all(&encoded) {
-                eprintln!("Failed to send ack: {}", e);
+                log_error!(global_loger(),"Failed to send ack: {}", e);
             };
         }
         None => {
@@ -61,7 +86,7 @@ fn handle_job_ack(stream: &mut TcpStream, shard_count: usize, msg: Message, queu
 }
 
 fn compute_shard_key(msg: &Message, shard_count: usize) -> usize {
-    if let Some(tlv) = msg.tlvs.get(0) {
+    if let Some(tlv) = msg.tlvs.first() {
         let mut hash = 0usize;
         for b in &tlv.value {
             hash = hash.wrapping_mul(31).wrapping_add(*b as usize);
@@ -70,7 +95,6 @@ fn compute_shard_key(msg: &Message, shard_count: usize) -> usize {
     }
     0
 }
-
 
 fn send_success_or_error_message(
     stream: &mut TcpStream,
@@ -103,6 +127,6 @@ fn send_success_or_error_message(
     };
     let encoded = msg.encode();
     if let Err(e) = stream.write_all(&encoded) {
-        eprintln!("Failed to send msg to the client: {}", e);
+        log_error!(global_loger(), "Failed to send msg to the client: {}", e);
     }
 }
