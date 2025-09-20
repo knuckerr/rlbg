@@ -5,7 +5,13 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{self, SystemTime, UNIX_EPOCH};
+
+const RESET: &str = "\x1b[0m";
+const RED: &str = "\x1b[31m";
+const YELLOW: &str = "\x1b[33m";
+const GREEN: &str = "\x1b[32m";
+const BLUE: &str = "\x1b[34m";
 
 #[derive(Clone, Copy, Debug)]
 pub enum Level {
@@ -25,7 +31,6 @@ impl fmt::Display for Level {
         }
     }
 }
-
 
 #[derive(Debug)]
 pub struct Logger {
@@ -56,13 +61,23 @@ impl Logger {
         }
     }
 
+    fn color_for_level(&self, level: Level) -> &'static str {
+        match level {
+            Level::Info => GREEN,
+            Level::Error => RED,
+            Level::Warn => YELLOW,
+            Level::Debug => RESET,
+        }
+    }
+
     pub fn log_fmt(&self, level: Level, args: fmt::Arguments) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
 
-        let formatted = format!("[{}][{}] {}", now, level, args);
+        let color = self.color_for_level(level);
+        let formatted = format!("[{}{}][{}] {} {}", color, now, level, RESET, args);
 
         let (lock, cvar) = &*self.sender;
         let mut q = lock.lock().unwrap();
