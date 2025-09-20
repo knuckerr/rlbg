@@ -2,6 +2,7 @@ import socket
 from .protocol import Message, JOB_PUSH, JOB_ACK, CONTROL
 from typing import Dict, Optional
 
+
 class Client:
     def __init__(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -11,10 +12,10 @@ class Client:
         """Send a job with arbitrary payload"""
         msg = Message(JOB_PUSH, [(0x01, job_id.encode()), (0x02, payload)])
         self.socket.sendall(msg.encode())
-        if (data := self.socket.recv(4096)):
+        if data := self.socket.recv(4096):
             msg = Message.decode(data)
             tlv_dict = msg.tlvs_as_dict()
-            if tlv_dict[3] != "success" :
+            if tlv_dict[3] != "success":
                 print(f"Error while pushing the msg {tlv_dict}")
                 return False
 
