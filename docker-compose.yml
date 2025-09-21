@@ -15,5 +15,6 @@ services:
     environment:
       HOST: broker
       PORT: 4000
+      OLLAMA_HOST: http://host.docker.internal:11434
     volumes:
       - ./consumer/src:/usr/src/consumer/src

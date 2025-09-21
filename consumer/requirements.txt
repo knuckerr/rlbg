@@ -1,3 +1,3 @@
-strands-agents 
+strands-agents[ollama]
 strands-agents-tools
 jsonschema

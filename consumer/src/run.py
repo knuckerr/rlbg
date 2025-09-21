@@ -8,6 +8,7 @@ import time
 
 from src.client import Client
 from src.logger import Logger
+from src.ai import process_job
 
 # Configuration
 HOST = os.getenv("HOST", "broker")
@@ -51,7 +52,7 @@ def ai_worker(stop_event: threading.Event, worker_id: int):
             continue
 
         Logger.log("INFO", f"AI worker {worker_id} processing job", job_id=job.get(1))
-        # process_job(job)
+        process_job(job)
         job_queue.task_done()
 
     Logger.log("INFO", f"AI worker {worker_id} stopping")
