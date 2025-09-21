@@ -1,12 +1,27 @@
 import socket
-from .protocol import Message, JOB_PUSH, JOB_ACK, CONTROL
+import json
+import jsonschema
+
 from typing import Dict, Optional
+
+
+from src.logger import Logger
+from src.protocol import Message, JOB_PUSH, JOB_ACK, CONTROL
+from src.job_schema import job_schema
 
 
 class Client:
     def __init__(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect((host, port))
+
+    def validate_job_schema(self, msg: dict) -> bool:
+        try:
+            jsonschema.validate(instance=msg, schema=job_schema)
+            return True
+        except jsonschema.ValidationError as e:
+            Logger.log("ERROR", f"Validation schema error {e}")
+            return False
 
     def push_job(self, job_id: str, payload: bytes) -> bool:
         """Send a job with arbitrary payload"""
@@ -16,7 +31,8 @@ class Client:
             msg = Message.decode(data)
             tlv_dict = msg.tlvs_as_dict()
             if tlv_dict[3] != "success":
-                print(f"Error while pushing the msg {tlv_dict}")
+                Logger.log("ERROR", f"Error while pushing the msg {tlv_dict}")
+
                 return False
 
             return True
@@ -34,7 +50,11 @@ class Client:
             if msg.msg_type == CONTROL and tlv_dict.get(3) == "No message to pop":
                 return None
             else:
-                return tlv_dict
+                data = json.loads(tlv_dict[2])
+                if not self.validate_job_schema(data):
+                    return None
+
+                return data
 
     def close(self):
         self.socket.close()
