@@ -5,9 +5,9 @@ import jsonschema
 from typing import Dict, Optional
 
 
-from src.logger import Logger
-from src.protocol import Message, JOB_PUSH, JOB_ACK, CONTROL
-from src.job_schema import job_schema
+from .logger import Logger
+from .protocol import Message, JOB_PUSH, JOB_ACK, CONTROL
+from .job_schema import job_schema
 
 
 class Client:
