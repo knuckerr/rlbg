@@ -23,7 +23,7 @@ impl WalWriter {
             entries_since_flish: 0,
         })
     }
-    
+
     fn append(&mut self, data: &[u8]) -> io::Result<()> {
         let len = (data.len() as u32).to_le_bytes();
         self.file.write_all(&len)?;
@@ -36,14 +36,14 @@ impl WalWriter {
 
         Ok(())
     }
-    
+
     fn flush(&mut self) -> io::Result<()> {
         self.file.sync_data()?;
         self.file.seek(SeekFrom::Start(0))?;
         self.entries_since_flish = 0;
         Ok(())
     }
-    
+
     fn truncate(&mut self) -> io::Result<()> {
         self.file.set_len(0)?;
         self.file.seek(SeekFrom::Start(0))?;
@@ -100,6 +100,74 @@ impl Shard {
 
     pub fn try_pop(&self) -> Option<Message> {
         self.queue.lock().unwrap().pop_front()
+    }
+
+    pub fn load_snapshoot(path: &Path) -> io::Result<VecDeque<Message>> {
+        let mut file = File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+
+        let mut queue = VecDeque::new();
+        let mut offset = 0;
+
+        while offset < buffer.len() {
+            if offset + 4 > buffer.len() {
+                break;
+            }
+
+            let msg_len = u32::from_le_bytes([
+                buffer[offset],
+                buffer[offset + 1],
+                buffer[offset + 2],
+                buffer[offset + 3],
+            ]) as usize;
+
+            offset += 4;
+
+            if offset + msg_len > buffer.len() {
+                break;
+            }
+
+            if let Ok(msg) = Message::decode(&buffer[offset..offset + msg_len]) {
+                queue.push_back(msg);
+            }
+
+            offset += msg_len
+        }
+
+        Ok(queue)
+    }
+
+    pub fn replay_wal(path: &Path) -> io::Result<Vec<Message>> {
+        let mut file = File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+
+        let mut messages = Vec::new();
+        let mut offset = 0;
+
+        while offset < buffer.len() {
+            if offset + 4 > buffer.len() {
+                break;
+            }
+            let msg_len = u32::from_le_bytes([
+                buffer[offset],
+                buffer[offset + 1],
+                buffer[offset + 2],
+                buffer[offset + 3],
+            ]) as usize;
+
+            offset += 4;
+
+            if offset + msg_len > buffer.len() {
+                break;
+            }
+            if let Ok(msg) = Message::decode(&buffer[offset..offset + msg_len]) {
+                messages.push(msg);
+            }
+            offset += msg_len;
+        }
+        Ok(messages)
     }
 }
 
