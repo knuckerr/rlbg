@@ -1,6 +1,56 @@
 use crate::protocol::Message;
 use std::collections::VecDeque;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+
+const WAL_BATCH_SIZE: usize = 100;
+
+#[derive(Debug)]
+struct WalWriter {
+    file: File,
+    path: PathBuf,
+    entries_since_flish: usize,
+}
+
+impl WalWriter {
+    fn new(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+            entries_since_flish: 0,
+        })
+    }
+    
+    fn append(&mut self, data: &[u8]) -> io::Result<()> {
+        let len = (data.len() as u32).to_le_bytes();
+        self.file.write_all(&len)?;
+        self.file.write_all(data)?;
+        self.entries_since_flish += 1;
+
+        if self.entries_since_flish > WAL_BATCH_SIZE {
+            self.flush()?;
+        }
+
+        Ok(())
+    }
+    
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.sync_data()?;
+        self.file.seek(SeekFrom::Start(0))?;
+        self.entries_since_flish = 0;
+        Ok(())
+    }
+    
+    fn truncate(&mut self) -> io::Result<()> {
+        self.file.set_len(0)?;
+        self.file.seek(SeekFrom::Start(0))?;
+        self.entries_since_flish = 0;
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 pub struct Shard {
