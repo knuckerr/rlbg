@@ -52,7 +52,9 @@ def ai_worker(stop_event: threading.Event, worker_id: int):
         except Empty:
             continue
 
-        Logger.log("INFO", f"AI worker {worker_id} processing job", job_id=job.get("id"))
+        Logger.log(
+            "INFO", f"AI worker {worker_id} processing job", job_id=job.get("id")
+        )
         process_job(job)
         job_queue.task_done()
 

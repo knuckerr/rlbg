@@ -18,7 +18,7 @@ def write_csv(
     filename: str,
     data: List[Dict[str, Any]],
     headers: Optional[List[str]] = None,
-):
+) -> str:
     """Write a list of dictionaries to a CSV file."""
     output_dir: Path = Path("./output")
     output_dir.mkdir(parents=True, exist_ok=True)  # ensure folder exists
@@ -40,9 +40,10 @@ def write_csv(
         Logger.log(
             "INFO", f"Successfully wrote {len(data)} rows to {filepath.resolve()}"
         )
+        return f"CSV successfully written to {filepath.resolve()}"
     except Exception as e:
         Logger.log("ERROR", f"error execute write with csv {e}")
-        return
+        return f"Error: Failed to write to CSV {e}"
 
 
 def search_web_with_content(query: str, num_results: int = 10) -> List[Dict[str, Any]]:
@@ -73,7 +74,7 @@ def search_web_with_content(query: str, num_results: int = 10) -> List[Dict[str,
         return []
 
 
-def write_json(filename: str, data: Any):
+def write_json(filename: str, data: Any) -> str:
     output_dir: Path = Path("./output")
     output_dir.mkdir(parents=True, exist_ok=True)  # ensure folder exists
     Logger.log("INFO", f"execute write_json with {data}")
@@ -81,15 +82,19 @@ def write_json(filename: str, data: Any):
         filepath = output_dir / filename
         if not data:
             Logger.log("INFO", f"No data to call write_json")
-            return
+            return "No data to write in the file"
+
         with filepath.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
             Logger.log("INFO", f"Successfully wrote JSON to {filepath.resolve()}")
+            return f"Json successfully written to {filepath.resolve()}"
+
     except Exception as e:
         Logger.log("ERROR", f"Error writing JSON: {e}")
+        return f"Error: Failed to write JSON {e}"
 
 
-def write_text(filename: str, data: str):
+def write_text(filename: str, data: str) -> str:
     output_dir: Path = Path("./output")
     output_dir.mkdir(parents=True, exist_ok=True)  # ensure folder exists
     Logger.log("INFO", f"execute write_text with {data}")
@@ -97,12 +102,16 @@ def write_text(filename: str, data: str):
         filepath = output_dir / filename
         if not data:
             Logger.log("INFO", f"No data to call write_text")
-            return
+            return "No data to write in the file"
+
         with filepath.open("w", encoding="utf-8") as f:
             f.write(data)
             Logger.log("INFO", f"Successfully wrote text to {filepath.resolve()}")
+            return f"Text successfully written to {filepath.resolve()}"
+
     except Exception as e:
         Logger.log("ERROR", f"Error writing text: {e}")
+        return f"Error: Failed to write text ({e})"
 
 
 search_and_write = FunctionToolset(
