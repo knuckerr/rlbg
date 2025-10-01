@@ -29,6 +29,7 @@ def reader_worker(stop_event: threading.Event):
         if job is None:
             time.sleep(0.1)  # avoid busy wait
             continue
+        job["id"] = job_id
         Logger.log("DEBUG", "Fetched job", job_id=job.get(1))
 
         # Backpressure: blocks if queue is full
@@ -51,7 +52,7 @@ def ai_worker(stop_event: threading.Event, worker_id: int):
         except Empty:
             continue
 
-        Logger.log("INFO", f"AI worker {worker_id} processing job", job_id=job.get(1))
+        Logger.log("INFO", f"AI worker {worker_id} processing job", job_id=job.get("id"))
         process_job(job)
         job_queue.task_done()
 

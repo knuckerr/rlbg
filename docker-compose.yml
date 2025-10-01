@@ -22,3 +22,4 @@ services:
     volumes:
       - ./consumer/src:/usr/src/consumer/src
       - ./output:/usr/src/consumer/output      # AI output files
+      - ./ai_output:/usr/src/consumer/ai_output      # AI output files
