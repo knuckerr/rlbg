@@ -2,7 +2,7 @@ use crate::broker::threadpool::ThreadPool;
 use crate::log_info;
 use crate::log_error;
 use crate::logger::{init_logger, global_loger};
-use crate::shards::init_global_queue;
+use crate::shards::{init_global_queue, get_global_queue};
 use std::net::TcpListener;
 
 pub fn run(
@@ -13,7 +13,8 @@ pub fn run(
 ) -> std::io::Result<()> {
     init_logger();
 
-    init_global_queue(shard_count);
+    init_global_queue(shard_count, "./queue_data")?;
+    let queue = get_global_queue();
     let listener = TcpListener::bind(addr)?;
     log_info!(global_loger(), "Broker listening on {}", addr);
 
@@ -32,5 +33,6 @@ pub fn run(
         }
     }
     pool.shutdown();
+    queue.force_checkpoint()?;
     Ok(())
 }
