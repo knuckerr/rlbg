@@ -4,6 +4,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use crate::log_info;
+use crate::logger::{global_loger};
 
 const WAL_BATCH_SIZE: usize = 100;
 const CHECKPOUNT_THRESHOLD: usize = 100;
@@ -21,6 +23,14 @@ impl WalOp {
             1 => Some(WalOp::Push),
             2 => Some(WalOp::Pop),
             _ => None,
+        }
+    }
+}
+impl std::fmt::Display for WalOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            Self::Push => write!(f, "Push"),
+            Self::Pop => write!(f, "Pop"),
         }
     }
 }
@@ -46,11 +56,13 @@ impl WalWriter {
         self.file.write_all(&[op as u8])?;
 
         if let Some(d) = data {
-            let len = (d.len() as u32).to_le_bytes();
+            let mut len = (d.len() as u32).to_le_bytes();
             self.file.write_all(&len)?;
             self.file.write_all(d)?;
+            log_info!(global_loger(), "Write msg to the WalWriter with WalOp {} and len {}", op, d.len());
         } else {
             self.file.write_all(&0u32.to_le_bytes())?;
+            log_info!(global_loger(), "Write msg to the WalWriter with WalOp {}", op);
         }
 
         self.entries_since_flish += 1;
