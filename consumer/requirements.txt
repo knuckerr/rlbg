@@ -1,3 +1,4 @@
 jsonschema
 pydantic-ai
 exa_py
+black

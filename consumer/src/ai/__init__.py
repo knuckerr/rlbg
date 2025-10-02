@@ -1,13 +1,15 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from pathlib import Path
+import asyncio
 
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai import Agent
+from pydantic_ai.run import AgentRunResult
 
 
-from src.logger import Logger
+from src.logger import logger
 from src.ai.tools import search_and_write
 
 # Environment variables
@@ -28,7 +30,7 @@ agent = Agent(
 )
 
 
-def save_output(job: Dict[str, Any], response: str):
+async def save_output(job: Dict[str, Any], response: str):
     output_dir: Path = Path(AI_OUTPUT_FOLDER)
     output_dir.mkdir(parents=True, exist_ok=True)  # ensure folder exists
     filepath = output_dir / f"job_{job['id']}_respose.txt"
@@ -36,10 +38,16 @@ def save_output(job: Dict[str, Any], response: str):
         f.write(response)
 
 
-def process_job(job: Dict[str, Any]):
-    """Run an agent job with the given system prompt and query."""
-    agent.system_prompt = job["system_prompt"]
-    response = agent.run_sync(job["params"]["query"], toolsets=[search_and_write])
-    Logger.log("INFO", f"Finish with the response {response.output}")
-    save_output(job, response.output)
-    return response
+async def process_job(job: Dict[str, Any]) -> Optional[AgentRunResult]:
+    try:
+        """Run an agent job with the given system prompt and query."""
+        agent.system_prompt = job["system_prompt"]
+        response = await agent.run(job["params"]["query"], toolsets=[search_and_write])
+        await save_output(job, response.output)
+        await logger.log("INFO", f"Finish with the response {response.output}")
+        return response
+    except Exception as e:
+        await logger.log(
+            "ERROR", f"Error processing job {job['id']}: {e}", exc_info=True
+        )
+        return

@@ -1,5 +1,4 @@
-import threading
-import queue
+import asyncio
 from queue import Empty
 import uuid
 import os
@@ -7,7 +6,7 @@ import signal
 import time
 
 from src.client import Client
-from src.logger import Logger
+from src.logger import logger
 from src.ai import process_job
 
 # Configuration
@@ -17,79 +16,82 @@ MAX_AI_WORKERS = int(os.getenv("MAX_AI_WORKERS", 4))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", 500))  # bounded queue
 
 # Shared queue
-job_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+job_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 
 
-def reader_worker(stop_event: threading.Event):
-    Logger.log("INFO", "Reader worker starting", host=HOST, port=PORT)
+async def reader_worker(stop_event: asyncio.Event):
+    await logger.log("INFO", "Reader worker starting", host=HOST, port=PORT)
     client = Client(HOST, PORT)
-    while not stop_event.is_set():
-        job_id = uuid.uuid4().hex
-        job = client.ack_job(job_id)
-        if job is None:
-            time.sleep(0.1)  # avoid busy wait
-            continue
-        job["id"] = job_id
-        Logger.log("DEBUG", "Fetched job", job_id=job.get(1))
+    await client.connect()
+    try:
+        while not stop_event.is_set():
+            job_id = uuid.uuid4().hex
+            job = await client.ack_job(job_id)
+            if not job:
+                await asyncio.sleep(0.1)
+                continue
 
-        # Backpressure: blocks if queue is full
-        try:
-            job_queue.put(job, timeout=1)
-            Logger.log("INFO", f"Recieved a job {job}")
-        except queue.Full:
-            Logger.log("WARNING", "Job queue full, retrying", job_id=job.get(1))
-            continue
-
-    client.close()
-    Logger.log("INFO", "Reader worker stopping")
+            job["id"] = job_id
+            await job_queue.put(job)
+            await logger.log("INFO", f"Received job {job}")
+    finally:
+        await client.close()
+        await logger.log("INFO", "Reader worker stopping")
 
 
-def ai_worker(stop_event: threading.Event, worker_id: int):
-    Logger.log("INFO", f"AI worker {worker_id} starting")
-    while not stop_event.is_set():
-        try:
-            job = job_queue.get(timeout=1)
-        except Empty:
-            continue
+async def ai_worker(stop_event: asyncio.Event, worker_id: int):
+    await logger.log("INFO", f"AI worker {worker_id} starting")
+    try:
+        while not stop_event.is_set():
+            try:
+                job = await asyncio.wait_for(job_queue.get(), timeout=1)
+            except asyncio.TimeoutError:
+                continue
 
-        Logger.log(
-            "INFO", f"AI worker {worker_id} processing job", job_id=job.get("id")
-        )
-        process_job(job)
-        job_queue.task_done()
+            try:
+                await logger.log(
+                    "INFO",
+                    f"AI worker {worker_id} processing job",
+                    job_id=job.get("id"),
+                )
+                await process_job(job)
+            finally:
+                job_queue.task_done()
+    finally:
+        await logger.log("INFO", f"AI worker {worker_id} stopping")
 
-    Logger.log("INFO", f"AI worker {worker_id} stopping")
 
-
-def main():
-    stop_event = threading.Event()
+async def main():
+    logger.start()
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     # Signal handling for graceful shutdown
-    def shutdown_handler(sig, frame):
-        Logger.log("WARNING", f"Received signal {sig}, shutting down...")
+    def shutdown_handler():
         stop_event.set()
 
-    signal.signal(signal.SIGINT, shutdown_handler)
-    signal.signal(signal.SIGTERM, shutdown_handler)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, shutdown_handler)
 
     # Start reader
-    reader = threading.Thread(target=reader_worker, args=(stop_event,), name="Reader")
-    reader.start()
+    reader_task = asyncio.create_task(reader_worker(stop_event))
 
     # Start AI workers
-    ai_threads = []
-    for i in range(MAX_AI_WORKERS):
-        t = threading.Thread(target=ai_worker, args=(stop_event, i), name=f"AI_{i}")
-        t.start()
-        ai_threads.append(t)
+    ai_tasks = [
+        asyncio.create_task(ai_worker(stop_event, i)) for i in range(MAX_AI_WORKERS)
+    ]
 
-    # Wait for shutdown
-    reader.join()
-    for t in ai_threads:
-        t.join()
+    await stop_event.wait()
+    await logger.log("INFO", "Waiting for queue to drain...")
+    await job_queue.join()
 
-    Logger.log("INFO", "Consumer shutdown complete.")
+    reader_task.cancel()
+    for t in ai_tasks:
+        t.cancel()
+
+    await logger.log("INFO", "Consumer shutdown complete.")
+    await logger.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
