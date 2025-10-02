@@ -1,8 +1,8 @@
 use crate::broker::threadpool::ThreadPool;
-use crate::log_info;
 use crate::log_error;
-use crate::logger::{init_logger, global_loger};
-use crate::shards::{init_global_queue, get_global_queue};
+use crate::log_info;
+use crate::logger::{global_loger, init_logger};
+use crate::shards::{get_global_queue, init_global_queue};
 use std::net::TcpListener;
 
 pub fn run(

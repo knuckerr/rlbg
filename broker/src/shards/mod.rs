@@ -1,11 +1,11 @@
+use crate::log_info;
+use crate::logger::global_loger;
 use crate::protocol::Message;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use crate::log_info;
-use crate::logger::{global_loger};
 
 const WAL_BATCH_SIZE: usize = 100;
 const CHECKPOUNT_THRESHOLD: usize = 100;
@@ -59,10 +59,19 @@ impl WalWriter {
             let mut len = (d.len() as u32).to_le_bytes();
             self.file.write_all(&len)?;
             self.file.write_all(d)?;
-            log_info!(global_loger(), "Write msg to the WalWriter with WalOp {} and len {}", op, d.len());
+            log_info!(
+                global_loger(),
+                "Write msg to the WalWriter with WalOp {} and len {}",
+                op,
+                d.len()
+            );
         } else {
             self.file.write_all(&0u32.to_le_bytes())?;
-            log_info!(global_loger(), "Write msg to the WalWriter with WalOp {}", op);
+            log_info!(
+                global_loger(),
+                "Write msg to the WalWriter with WalOp {}",
+                op
+            );
         }
 
         self.entries_since_flish += 1;
@@ -384,7 +393,7 @@ pub fn get_global_queue() -> Arc<ShardedQueue> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Header, Message, MessageType, Tlv, MAGIC, VERSION};
+    use crate::protocol::{Header, MAGIC, Message, MessageType, Tlv, VERSION};
     use std::env;
     use std::sync::Arc;
     use std::thread;

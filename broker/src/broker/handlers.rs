@@ -1,7 +1,7 @@
 use crate::log_error;
 use crate::log_info;
 use crate::logger::global_loger;
-use crate::protocol::{Header, Message, MessageType, Tlv, MAGIC, VERSION};
+use crate::protocol::{Header, MAGIC, Message, MessageType, Tlv, VERSION};
 use crate::shards::ShardedQueue;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -76,7 +76,7 @@ fn handle_job_ack(
             let encoded = msg.encode();
 
             if let Err(e) = stream.write_all(&encoded) {
-                log_error!(global_loger(),"Failed to send ack: {}", e);
+                log_error!(global_loger(), "Failed to send ack: {}", e);
             };
         }
         None => {

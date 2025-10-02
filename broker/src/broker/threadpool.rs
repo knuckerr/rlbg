@@ -34,27 +34,29 @@ impl ThreadPool {
             let queue_clone = Arc::clone(&queue);
             let shutdown_clone = Arc::clone(&is_shutdown);
 
-            workers.push(thread::spawn(move || loop {
-                let stream_opt = {
-                    let (lock, task_cvar, space_cvar) = &*queue_clone;
-                    let mut state = lock.lock().unwrap();
-                    while state.tasks.is_empty() && !shutdown_clone.load(Ordering::Acquire) {
-                        state = task_cvar.wait(state).unwrap();
-                    }
-                    if shutdown_clone.load(Ordering::Acquire) && state.tasks.is_empty() {
-                        return;
-                    }
-                    let stream = state.tasks.pop_front();
-                    space_cvar.notify_one();
-                    stream
-                };
+            workers.push(thread::spawn(move || {
+                loop {
+                    let stream_opt = {
+                        let (lock, task_cvar, space_cvar) = &*queue_clone;
+                        let mut state = lock.lock().unwrap();
+                        while state.tasks.is_empty() && !shutdown_clone.load(Ordering::Acquire) {
+                            state = task_cvar.wait(state).unwrap();
+                        }
+                        if shutdown_clone.load(Ordering::Acquire) && state.tasks.is_empty() {
+                            return;
+                        }
+                        let stream = state.tasks.pop_front();
+                        space_cvar.notify_one();
+                        stream
+                    };
 
-                if let Some(stream) = stream_opt {
-                    let result = std::panic::catch_unwind(|| {
-                        handle_client(stream, shard_count, get_global_queue());
-                    });
-                    if let Err(e) = result {
-                        eprintln!("Worker panic {:?}", e);
+                    if let Some(stream) = stream_opt {
+                        let result = std::panic::catch_unwind(|| {
+                            handle_client(stream, shard_count, get_global_queue());
+                        });
+                        if let Err(e) = result {
+                            eprintln!("Worker panic {:?}", e);
+                        }
                     }
                 }
             }));

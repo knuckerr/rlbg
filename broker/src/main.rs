@@ -1,9 +1,8 @@
+mod broker;
 mod protocol;
 mod shards;
-mod broker;
 #[macro_use]
 pub mod logger;
-
 
 use crate::broker::server;
 
