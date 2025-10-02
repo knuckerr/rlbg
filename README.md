@@ -1,133 +1,202 @@
 
+For learning purpose only - not production ready
 
-# AI Broker and Consumer
+# RLBG — Async AI Job Pipeline
+RLBG is a **high-performance AI job processing system** is built with:
 
-## Overview
-
-This project is split into **two main parts**:
-
-* **Broker** → written in **Rust**, built only with the **standard library** (no extra dependencies).
-* **Consumer** → a **Python service** that connects to the broker, fetches jobs, and runs them through an **AI agent**.
-
-The goal is to experiment with an **async AI job processing pipeline**, where messages flow through a custom broker, get picked up by a consumer, and then processed by an AI system.
-
-⚠️ This is **for learning purposes only** — the whole idea is to discover new places where AI can fit.
+- **Rust broker**: handles job queue, threading, and custom binary protocol. Zero dependencies, uses `std` only.  
+- **Python async consumer**: pulls jobs from broker, runs AI tasks (Ollama + Exa), and writes outputs asynchronously.  
+- Fully **async end-to-end** pipeline (network, AI inference).  
 
 ---
 
-## Broker (Rust)
+## Architecture Overview
 
-* Built using **only the STD library**.
-* Implements its **own custom protocol** for encoding and decoding messages.
-* Includes its **own thread pool** for handling client connections and requests.
-* Acts as the central **message queue** where jobs are pushed and stored until fetched.
+```text
+[Rust Broker]  <--TCP-->  [Python Async Consumer]
+       |                        |
+       |                        v
+       |                 Async Queue (job_queue)
+       |                        |
+       |                +----------------+
+       |                | Async AI Worker|
+       |                +----------------+
+       |                        |
+       |                Writes to CSV/JSON/TXT (async)
+       |                        |
+       |                 AsyncLogger (colored, exc_info)
+````
 
----
-
-## Consumer (Python)
-
-* Connects to the **Rust broker** using the same protocol to **encode/decode messages**.
-* Fetches jobs from the broker’s queue.
-* Each job is passed to an **AI agent** powered by:
-
-  * **Ollama** → runs LLMs locally.
-  * **Strands agents** → used as lightweight orchestrators for chaining prompts, context, and job logic.
-* The AI processes the job and outputs the results into a **file**.
-* Designed to scale with multiple worker threads to handle jobs concurrently.
-
----
-
-## Flow
-
-1. **Producer/Client** sends a job → Broker.
-2. **Broker** encodes and stores the job in its queue.
-3. **Consumer** fetches a job, decodes it.
-4. **AI Agent** (Ollama + Strands) processes the job based on system prompt + context.
-5. **Consumer** writes the result to a file.
+* **Broker**: implemented in Rust, supports JobPush, JobAck, JobResult, JobStatus, AiQuery, AiResponse, and Control messages.
+* **Consumer**: Python async, reads jobs with `AsyncClient`, processes with AI, writes files asynchronously.
+* **Logging**: fully async logger, supports exception tracebacks (`exc_info=True`) and ANSI colors.
 
 ---
 
-## Why This?
+## Rust Broker Protocol
 
-* Build everything from scratch → no dependencies in the broker.
-* Understand how **protocols, queues, and job distribution** work at a low level.
-* See how AI can be plugged into a **distributed async system**.
-* A playground to try new ideas (search, summarization, file generation, etc.).
+* **Header**: 12 bytes
 
----
+| Field      | Size | Description                              |
+| ---------- | ---- | ---------------------------------------- |
+| Magic      | 4    | "RBQ1"                                   |
+| Version    | 1    | Protocol version (1)                     |
+| Type       | 1    | Message type (`JobPush`, `JobAck`, etc.) |
+| Flags      | 2    | Optional flags                           |
+| PayloadLen | 4    | Length of TLV payload                    |
 
-## Notes
+* **Payload**: TLV sequence
 
-* This is not production-ready — it’s a **learning project**.
-* Expect things to break, change, and evolve.
-* The fun part is experimenting with **how AI can fit in real job pipelines**.
-
----
-
-## Running with Docker Compose
-
-The project ships with a `docker-compose.yml` setup:
-
-```yaml
-version: "3.9"
-
-services:
-  broker:
-    build: ./broker
-    container_name: rust_broker
-    ports:
-      - "4000:4000"
-
-  consumer:
-    build: ./consumer
-    container_name: python_consumer
-    depends_on:
-      - broker
-    environment:
-      HOST: broker
-      PORT: 4000
-      OLLAMA_HOST: http://host.docker.internal:11434
-    volumes:
-      - ./consumer/src:/usr/src/consumer/src
+```text
+Tag | Len | Value
+------------------
+01  | 0005| job42
+03  | 0004| [payload length]
+07  | 0008| [timestamp]
 ```
 
-### Steps:
+* Supported **MessageTypes**:
 
-1. Start everything:
+```rust
+JobPush = 0x01
+JobAck = 0x02
+JobResult = 0x03
+JobStatus = 0x04
+AiQuery = 0x10
+AiResponse = 0x11
+Control = 0x20
+```
 
-   ```bash
-   docker-compose up --build
-   ```
-2. Ensure **Ollama** is running locally (default: `http://localhost:11434`).
-3. Push jobs with a Python client.
+* TLVs are encoded as:
+
+```text
+Tag: u8
+Length: u16 (big endian)
+Value: variable
+```
 
 ---
 
-## Example Client Usage
+## Python Async Consumer
 
-Here’s how to push a job into the broker from Python:
+* **AsyncClient**: replaces synchronous socket client, fully non-blocking.
+* **AsyncQueue**: Python `asyncio.Queue` for job processing.
+* **AI Workers**: run Ollama + Exa asynchronously.
+* **File writes**: using (CSV, JSON, TXT).
+* **Logger**: async, supports colors and `exc_info`.
+
+---
+
+### Example: Async Job Reader
 
 ```python
-import json
-from client import Client  # assuming you have a simple broker client
-
-client = Client("127.0.0.1", 4000)
-
-job_data = {
-    "system_prompt": "You are a master mind in C++",
-    "params": {
-        "query": "what are some safe approaches to avoid memory leaks?",
-        "output_file": "best_practises.txt"
-    }
-}
-
-# Push job into the broker
-result = client.push_job("job1", json.dumps(job_data).encode())
-print("Job pushed:", result)
+async def reader_worker(stop_event: asyncio.Event):
+    client = AsyncClient(HOST, PORT)
+    await client.connect()
+    try:
+        while not stop_event.is_set():
+            job_id = uuid.uuid4().hex
+            job = await client.ack_job(job_id)
+            if job:
+                await job_queue.put(job)
+                await logger.log("INFO", f"Received job {job}")
+            else:
+                await asyncio.sleep(0.1)
+    finally:
+        await client.close()
+        await logger.log("INFO", "Reader worker stopped")
 ```
 
-The consumer will:
+---
 
-1. Pick up the job.
-2. Pass it through **Ollama + Strands agent**.
-3. Write the output into `best_practises.txt`.
+### Example: Async Job Submission
+
+```python
+client = AsyncClient("127.0.0.1", 4000)
+await client.connect()
+job_id = "forced_events_job"
+prompt = {
+    "system_prompt": "You are the best websearch and csv creator",
+    "params": {"query": "Find insights into AI's impact and save to hot_news.csv"}
+}
+await client.push_job(job_id, json.dumps(prompt).encode())
+await client.close()
+```
+
+---
+
+### Async Logger Usage
+
+```python
+try:
+    1 / 0
+except Exception:
+    await logger.log("ERROR", "Division failed", exc_info=True)
+```
+
+* Supports **async logging**, ANSI colors, and traceback capture.
+
+---
+
+## Docker & Make Commands
+
+```makefile
+.DEFAULT_GOAL := help
+.PHONY: help up down logs build broker-sh consumer-sh python-lint rust-lint
+
+help: ## Show available commands
+	@echo "Available commands:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+up: ## Start docker-compose
+	docker-compose up -d
+
+logs: ## Tail logs from docker-compose
+	docker-compose logs -f
+
+down: ## Stop docker-compose
+	docker-compose down
+
+build: ## Build docker-compose
+	docker-compose build
+
+broker-sh: ## Open a bash in broker container
+	docker exec -it rust_broker bash
+
+consumer-sh: ## Open a bash in consumer container
+	docker exec -it python_consumer bash
+
+python-lint: ## Run Black linter
+	black consumer
+
+rust-lint: ## Run Rust fmt
+	cargo fmt --manifest-path broker/Cargo.toml
+```
+
+---
+
+## Environment Variables
+
+| Variable           | Default                  | Description                |
+| ------------------ | ------------------------ | -------------------------- |
+| `HOST`             | `broker`                 | Broker hostname            |
+| `PORT`             | `4000`                   | Broker port                |
+| `MAX_AI_WORKERS`   | `4`                      | Max concurrent AI workers  |
+| `MAX_QUEUE_SIZE`   | `500`                    | Async job queue size       |
+| `OLLAMA_MODEL`     | `qwen3:8b`               | Ollama model for inference |
+| `OLLAMA_HOST`      | `http://127.0.0.1:11434` | Ollama API host            |
+| `EXA_API_KEY`      | None                     | Exa API key for web search |
+| `AI_OUTPUT_FOLDER` | `./ai_output`            | Folder to save AI outputs  |
+
+---
+
+## Features
+
+* Fully async AI pipeline: **network, AI inference, logging**.
+* AsyncClient supports **JobAck, JobPush** over Rust broker protocol.
+* Async logging with **colors** and **exception tracebacks**.
+* Scales to **hundreds of concurrent jobs** without thread blocking.
+* Dockerized environment for easy deployment and testing.
+
+```
